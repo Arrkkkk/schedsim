@@ -1,0 +1,47 @@
+import 'dart:math';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../models/process.dart';
+
+final processListProvider = StateNotifierProvider<ProcessListNotifier, List<Process>>((ref) {
+  return ProcessListNotifier();
+});
+
+class ProcessListNotifier extends StateNotifier<List<Process>> {
+  ProcessListNotifier() : super([]);
+
+  void addProcess(Process process) {
+    state = [...state, process];
+  }
+
+  void removeProcess(int index) {
+    final newList = [...state];
+    newList.removeAt(index);
+    state = newList;
+  }
+
+  void updateProcess(int index, Process process) {
+    final newList = [...state];
+    newList[index] = process;
+    state = newList;
+  }
+
+  void clearProcesses() {
+    state = [];
+  }
+
+  void generateRandomProcesses(int count) {
+    final random = Random();
+    final processes = <Process>[];
+    
+    for (int i = 0; i < count; i++) {
+      processes.add(Process(
+        id: 'P${i + 1}',
+        arrivalTime: random.nextInt(10),
+        burstTime: random.nextInt(15) + 1,
+        priority: random.nextInt(10) + 1,
+      ));
+    }
+    
+    state = processes;
+  }
+}

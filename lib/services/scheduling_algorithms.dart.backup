@@ -1,0 +1,471 @@
+import 'dart:math';
+import '../models/process.dart';
+import '../models/gantt_segment.dart';
+import '../models/schedule_result.dart';
+
+class SchedulingAlgorithms {
+  static ScheduleResult fcfs(List<Process> processes) {
+    final sortedProcesses = [...processes]
+      ..sort((a, b) => a.arrivalTime.compareTo(b.arrivalTime));
+    final ganttChart = <GanttSegment>[];
+    final steps = <String>['FCFS Algorithm - First Come First Serve'];
+
+    int currentTime = 0;
+
+    steps.add('Processes sorted by arrival time:');
+    for (final process in sortedProcesses) {
+      steps.add(
+        '${process.id}: Arrival=${process.arrivalTime}, Burst=${process.burstTime}',
+      );
+    }
+
+    for (final process in sortedProcesses) {
+      if (currentTime < process.arrivalTime) {
+        currentTime = process.arrivalTime;
+      }
+
+      final startTime = currentTime;
+      final endTime = startTime + process.burstTime;
+
+      process.completionTime = endTime;
+      process.turnaroundTime = process.completionTime! - process.arrivalTime;
+      process.waitingTime = process.turnaroundTime! - process.burstTime;
+      process.responseTime = startTime - process.arrivalTime;
+
+      ganttChart.add(
+        GanttSegment(
+          processId: process.id,
+          startTime: startTime,
+          endTime: endTime,
+        ),
+      );
+
+      steps.add(
+        '${process.id}: Start=$startTime, End=$endTime, TAT=${process.turnaroundTime}, WT=${process.waitingTime}',
+      );
+      currentTime = endTime;
+    }
+
+    return _calculateMetrics(sortedProcesses, ganttChart, steps);
+  }
+
+  static ScheduleResult sjfNonPreemptive(List<Process> processes) {
+    final processList = processes.map((p) => p.copy()).toList();
+    final ganttChart = <GanttSegment>[];
+    final steps = <String>['SJF Non-Preemptive - Shortest Job First'];
+    final completed = <Process>[];
+
+    int currentTime = 0;
+
+    while (completed.length < processList.length) {
+      final availableProcesses = processList
+          .where((p) => p.arrivalTime <= currentTime && !completed.contains(p))
+          .toList();
+
+      if (availableProcesses.isEmpty) {
+        currentTime++;
+        continue;
+      }
+
+      availableProcesses.sort((a, b) => a.burstTime.compareTo(b.burstTime));
+      final selectedProcess = availableProcesses.first;
+
+      final startTime = currentTime;
+      final endTime = startTime + selectedProcess.burstTime;
+
+      selectedProcess.completionTime = endTime;
+      selectedProcess.turnaroundTime =
+          selectedProcess.completionTime! - selectedProcess.arrivalTime;
+      selectedProcess.waitingTime =
+          selectedProcess.turnaroundTime! - selectedProcess.burstTime;
+      selectedProcess.responseTime = startTime - selectedProcess.arrivalTime;
+
+      ganttChart.add(
+        GanttSegment(
+          processId: selectedProcess.id,
+          startTime: startTime,
+          endTime: endTime,
+        ),
+      );
+
+      steps.add(
+        'Time $currentTime: Selected ${selectedProcess.id} (Burst=${selectedProcess.burstTime})',
+      );
+      completed.add(selectedProcess);
+      currentTime = endTime;
+    }
+
+    return _calculateMetrics(processList, ganttChart, steps);
+  }
+
+  static ScheduleResult sjfPreemptive(List<Process> processes) {
+    final processList = processes.map((p) => p.copy()).toList();
+    final ganttChart = <GanttSegment>[];
+    final steps = <String>[
+      'SJF Preemptive (SRTF) - Shortest Remaining Time First',
+    ];
+    final completed = <Process>[];
+
+    int currentTime = 0;
+    Process? currentProcess;
+    int processStartTime = 0;
+
+    while (completed.length < processList.length) {
+      final availableProcesses = processList
+          .where((p) => p.arrivalTime <= currentTime && !completed.contains(p))
+          .toList();
+
+      if (availableProcesses.isEmpty) {
+        if (currentProcess != null) {
+          // If CPU is idle but a process was running, log its segment
+          ganttChart.add(
+            GanttSegment(
+              processId: currentProcess.id,
+              startTime: processStartTime,
+              endTime: currentTime,
+            ),
+          );
+          currentProcess = null; // CPU is now officially idle
+        }
+        currentTime++;
+        continue;
+      }
+
+      availableProcesses.sort(
+        (a, b) => a.remainingTime.compareTo(b.remainingTime),
+      );
+      final shortestProcess = availableProcesses.first;
+
+      if (currentProcess != shortestProcess) {
+        if (currentProcess != null) {
+          ganttChart.add(
+            GanttSegment(
+              processId: currentProcess.id,
+              startTime: processStartTime,
+              endTime: currentTime,
+              isPreempted: !completed.contains(currentProcess),
+            ),
+          );
+        }
+
+        currentProcess = shortestProcess;
+        processStartTime = currentTime;
+
+        if (!shortestProcess.hasStarted) {
+          shortestProcess.hasStarted = true;
+          shortestProcess.responseTime =
+              currentTime - shortestProcess.arrivalTime;
+        }
+
+        steps.add(
+          'Time $currentTime: Selected ${shortestProcess.id} (Remaining=${shortestProcess.remainingTime})',
+        );
+      }
+
+      final activeProcess = currentProcess!;
+
+      activeProcess.remainingTime--;
+      currentTime++;
+
+      if (activeProcess.remainingTime == 0) {
+        activeProcess.completionTime = currentTime;
+        activeProcess.turnaroundTime =
+            activeProcess.completionTime! - activeProcess.arrivalTime;
+        activeProcess.waitingTime =
+            activeProcess.turnaroundTime! - activeProcess.burstTime;
+
+        ganttChart.add(
+          GanttSegment(
+            processId: activeProcess.id,
+            startTime: processStartTime,
+            endTime: currentTime,
+          ),
+        );
+
+        completed.add(activeProcess);
+        currentProcess = null;
+      }
+    }
+
+    return _calculateMetrics(processList, ganttChart, steps);
+  }
+
+  static ScheduleResult roundRobin(List<Process> processes, int quantum) {
+    final processList = processes.map((p) => p.copy()).toList();
+    final ganttChart = <GanttSegment>[];
+    final steps = <String>['Round Robin Algorithm (Quantum = $quantum)'];
+    final queue = <Process>[];
+    final completed = <Process>[];
+
+    int currentTime = 0;
+    int processIndex = 0;
+
+    processList.sort((a, b) => a.arrivalTime.compareTo(b.arrivalTime));
+
+    while (completed.length < processList.length) {
+      while (processIndex < processList.length &&
+          processList[processIndex].arrivalTime <= currentTime) {
+        queue.add(processList[processIndex]);
+        processIndex++;
+      }
+
+      if (queue.isEmpty) {
+        currentTime++;
+        continue;
+      }
+
+      final currentProcess = queue.removeAt(0);
+      final startTime = currentTime;
+
+      if (!currentProcess.hasStarted) {
+        currentProcess.hasStarted = true;
+        currentProcess.responseTime = startTime - currentProcess.arrivalTime;
+      }
+
+      final executionTime = min(quantum, currentProcess.remainingTime);
+      currentProcess.remainingTime -= executionTime;
+      currentTime += executionTime;
+
+      ganttChart.add(
+        GanttSegment(
+          processId: currentProcess.id,
+          startTime: startTime,
+          endTime: currentTime,
+          isPreempted: currentProcess.remainingTime > 0,
+        ),
+      );
+
+      steps.add(
+        'Time $startTime-$currentTime: ${currentProcess.id} executed (Remaining=${currentProcess.remainingTime})',
+      );
+
+      while (processIndex < processList.length &&
+          processList[processIndex].arrivalTime <= currentTime) {
+        queue.add(processList[processIndex]);
+        processIndex++;
+      }
+
+      if (currentProcess.remainingTime > 0) {
+        queue.add(currentProcess);
+      } else {
+        currentProcess.completionTime = currentTime;
+        currentProcess.turnaroundTime =
+            currentProcess.completionTime! - currentProcess.arrivalTime;
+        currentProcess.waitingTime =
+            currentProcess.turnaroundTime! - currentProcess.burstTime;
+        completed.add(currentProcess);
+      }
+    }
+
+    return _calculateMetrics(processList, ganttChart, steps);
+  }
+
+  static ScheduleResult priorityNonPreemptive(List<Process> processes) {
+    final processList = processes.map((p) => p.copy()).toList();
+    final ganttChart = <GanttSegment>[];
+    final steps = <String>[
+      'Priority Non-Preemptive (Lower number = Higher priority)',
+    ];
+    final completed = <Process>[];
+
+    int currentTime = 0;
+
+    while (completed.length < processList.length) {
+      final availableProcesses = processList
+          .where((p) => p.arrivalTime <= currentTime && !completed.contains(p))
+          .toList();
+
+      if (availableProcesses.isEmpty) {
+        currentTime++;
+        continue;
+      }
+
+      availableProcesses.sort((a, b) {
+        final priorityComparison = a.priority.compareTo(b.priority);
+        if (priorityComparison != 0) return priorityComparison;
+        return a.arrivalTime.compareTo(b.arrivalTime);
+      });
+
+      final selectedProcess = availableProcesses.first;
+      final startTime = currentTime;
+      final endTime = startTime + selectedProcess.burstTime;
+
+      selectedProcess.completionTime = endTime;
+      selectedProcess.turnaroundTime =
+          selectedProcess.completionTime! - selectedProcess.arrivalTime;
+      selectedProcess.waitingTime =
+          selectedProcess.turnaroundTime! - selectedProcess.burstTime;
+      selectedProcess.responseTime = startTime - selectedProcess.arrivalTime;
+
+      ganttChart.add(
+        GanttSegment(
+          processId: selectedProcess.id,
+          startTime: startTime,
+          endTime: endTime,
+        ),
+      );
+
+      steps.add(
+        'Time $currentTime: Selected ${selectedProcess.id} (Priority=${selectedProcess.priority})',
+      );
+      completed.add(selectedProcess);
+      currentTime = endTime;
+    }
+
+    return _calculateMetrics(processList, ganttChart, steps);
+  }
+
+  static ScheduleResult priorityPreemptive(List<Process> processes) {
+    final processList = processes.map((p) => p.copy()).toList();
+    final ganttChart = <GanttSegment>[];
+    final steps = <String>[
+      'Priority Preemptive (Lower number = Higher priority)',
+    ];
+    final completed = <Process>[];
+
+    int currentTime = 0;
+    Process? currentProcess;
+    int processStartTime = 0;
+
+    while (completed.length < processList.length) {
+      final availableProcesses = processList
+          .where((p) => p.arrivalTime <= currentTime && !completed.contains(p))
+          .toList();
+
+      if (availableProcesses.isEmpty) {
+        if (currentProcess != null) {
+          ganttChart.add(
+            GanttSegment(
+              processId: currentProcess.id,
+              startTime: processStartTime,
+              endTime: currentTime,
+            ),
+          );
+          currentProcess = null;
+        }
+        currentTime++;
+        continue;
+      }
+
+      availableProcesses.sort((a, b) {
+        final priorityComparison = a.priority.compareTo(b.priority);
+        if (priorityComparison != 0) return priorityComparison;
+        return a.arrivalTime.compareTo(b.arrivalTime);
+      });
+
+      final highestPriorityProcess = availableProcesses.first;
+
+      if (currentProcess != highestPriorityProcess) {
+        if (currentProcess != null) {
+          ganttChart.add(
+            GanttSegment(
+              processId: currentProcess.id,
+              startTime: processStartTime,
+              endTime: currentTime,
+              isPreempted: !completed.contains(currentProcess),
+            ),
+          );
+        }
+
+        currentProcess = highestPriorityProcess;
+        processStartTime = currentTime;
+
+        if (!currentProcess.hasStarted) {
+          currentProcess.hasStarted = true;
+          currentProcess.responseTime =
+              currentTime - currentProcess.arrivalTime;
+        }
+
+        steps.add(
+          'Time $currentTime: Selected ${currentProcess.id} (Priority=${currentProcess.priority})',
+        );
+      }
+
+      final activeProcess = currentProcess!;
+
+      activeProcess.remainingTime--;
+      currentTime++;
+
+      if (activeProcess.remainingTime == 0) {
+        activeProcess.completionTime = currentTime;
+        activeProcess.turnaroundTime =
+            activeProcess.completionTime! - activeProcess.arrivalTime;
+        activeProcess.waitingTime =
+            activeProcess.turnaroundTime! - activeProcess.burstTime;
+
+        ganttChart.add(
+          GanttSegment(
+            processId: activeProcess.id,
+            startTime: processStartTime,
+            endTime: currentTime,
+          ),
+        );
+
+        completed.add(activeProcess);
+        currentProcess = null;
+      }
+    }
+
+    return _calculateMetrics(processList, ganttChart, steps);
+  }
+
+  static ScheduleResult _calculateMetrics(
+    List<Process> processes,
+    List<GanttSegment> ganttChart,
+    List<String> steps,
+  ) {
+    final totalTurnaroundTime = processes.fold<num>(
+      0,
+      (sum, p) => sum + (p.turnaroundTime ?? 0),
+    );
+    final totalWaitingTime = processes.fold<num>(
+      0,
+      (sum, p) => sum + (p.waitingTime ?? 0),
+    );
+    final totalResponseTime = processes.fold<num>(
+      0,
+      (sum, p) => sum + (p.responseTime ?? 0),
+    );
+    final totalBurstTime = processes.fold<num>(
+      0,
+      (sum, p) => sum + p.burstTime,
+    );
+    final totalTime = ganttChart.isEmpty ? 0 : ganttChart.last.endTime;
+
+    final averageTurnaroundTime = processes.isEmpty
+        ? 0.0
+        : totalTurnaroundTime / processes.length;
+    final averageWaitingTime = processes.isEmpty
+        ? 0.0
+        : totalWaitingTime / processes.length;
+    final averageResponseTime = processes.isEmpty
+        ? 0.0
+        : totalResponseTime / processes.length;
+
+    final cpuUtilization = totalTime > 0
+        ? (totalBurstTime / totalTime) * 100
+        : 0.0;
+    final throughput = totalTime > 0 ? processes.length / totalTime : 0.0;
+
+    steps.addAll([
+      '',
+      'Results:',
+      'Average Turnaround Time: ${averageTurnaroundTime.toStringAsFixed(2)}',
+      'Average Waiting Time: ${averageWaitingTime.toStringAsFixed(2)}',
+      'Average Response Time: ${averageResponseTime.toStringAsFixed(2)}',
+      'CPU Utilization: ${cpuUtilization.toStringAsFixed(2)}%',
+      'Throughput: ${throughput.toStringAsFixed(2)} processes/unit time',
+    ]);
+
+    return ScheduleResult(
+      processes: processes,
+      ganttChart: ganttChart,
+      averageTurnaroundTime: averageTurnaroundTime,
+      averageWaitingTime: averageWaitingTime,
+      averageResponseTime: averageResponseTime,
+      cpuUtilization: cpuUtilization,
+      throughput: throughput,
+      steps: steps,
+    );
+  }
+}
