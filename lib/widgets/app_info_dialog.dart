@@ -25,13 +25,13 @@ class AppInfoDialog extends StatelessWidget {
             _buildInfoSection(
               context,
               'About the App',
-              'CPU Scheduling Simulator is a comprehensive educational tool designed to help students and professionals understand various CPU scheduling algorithms through interactive visualizations and detailed analysis.',
+              'SchedSim is a CPU scheduling simulator for learning operating-system algorithms. Add processes, run a scheduler, and inspect Gantt charts, step-by-step traces, and waiting / turnaround / response metrics.',
             ),
             const SizedBox(height: 16),
             _buildInfoSection(
               context,
               'Features',
-              '• First Come First Serve (FCFS)\n• Shortest Job First (SJF)\n• Shortest Remaining Time First (SRTF)\n• Round Robin Scheduling\n• Priority-based Scheduling\n• Interactive Gantt Charts\n• Performance Metrics Analysis\n• Side-by-side Algorithm Comparison',
+              '• FCFS, SJF, SRTF, Round Robin, Priority\n• Multilevel Queue (MLQ) and MLFQ\n• Interactive Gantt charts and step traces\n• Performance metrics and side-by-side comparison\n• Random process generation\n• Export results to PDF or CSV',
             ),
             const SizedBox(height: 16),
             _buildInfoSection(
